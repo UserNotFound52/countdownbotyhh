@@ -20,13 +20,12 @@ logger = logging.getLogger(__name__)
 
 DB_FILE = "countdowns.db"
 
-# 设置目标时区（默认 UTC+8，适应北京/马来西亚时间）
+# 设置目标时区（默认 UTC+8）
 LOCAL_TZ = datetime.timezone(datetime.timedelta(hours=8))
 
-# --- 防休眠 Web 服务器 ---
+# --- 防休眠 HTTP 服务器（满足 Render Web Service 健康检查）---
 
 class HealthCheckHandler(BaseHTTPRequestHandler):
-    """响应 Render 和外部 Ping 的健康检查请求，防止服务休眠"""
     def do_GET(self):
         self.send_response(200)
         self.send_header("Content-type", "text/plain; charset=utf-8")
@@ -34,7 +33,6 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
         self.wfile.write(b"Bot is alive and running!")
 
     def log_message(self, format, *args):
-        # 禁用默认日志，避免控制台被保活请求刷屏
         return
 
 def start_health_check_server():
@@ -199,16 +197,17 @@ async def post_init(application: Application):
     application.job_queue.run_daily(daily_broadcast, time=target_time)
 
 def main():
-    # 开启防休眠 Web 服务
+    # 开启防休眠 HTTP 服务
     start_health_check_server()
 
-    TOKEN = "8821535562:AAF30ZPTWkDlJGs_ioqDVBiYQs5hWr36tF8"  # ⚠️ 替换为你的真实 Token
+    # ⚠️ 请把下面的 Token 替换成你的真实 Token 字符串
+    TOKEN = "8821535562:AAF30ZPTWkDlJGs_ioqDVBiYQs5hWr36tF8"
 
     app = ApplicationBuilder().token(TOKEN).post_init(post_init).build()
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("set", set_command))
     app.add_handler(CommandHandler("list", list_command))
-    app.add_handler(CommandHandler("test", daily_broadcast))  # 方便手动测试
+    app.add_handler(CommandHandler("test", daily_broadcast))
 
     logger.info("Bot 运行中...")
     app.run_polling()
