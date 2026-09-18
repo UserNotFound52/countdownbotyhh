@@ -23,7 +23,7 @@ DB_FILE = "countdowns.db"
 # 设置目标时区（默认 UTC+8）
 LOCAL_TZ = datetime.timezone(datetime.timedelta(hours=8))
 
-# --- 防休眠 HTTP 服务器（满足 Render Web Service 健康检查）---
+# --- 防休眠 HTTP 服务器 ---
 
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -94,7 +94,7 @@ def mark_as_notified(countdown_id: int):
     conn.commit()
     conn.close()
 
-# --- 每天 06:00 准时播报 ---
+# --- 每天 06:00 准时播报核心逻辑 ---
 
 async def daily_broadcast(context: ContextTypes.DEFAULT_TYPE):
     active_countdowns = get_active_countdowns()
@@ -187,6 +187,23 @@ async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(msg, parse_mode="Markdown")
 
+async def test_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """手动测试发送广播"""
+    chat_id = update.effective_chat.id
+    active_countdowns = get_active_countdowns(chat_id)
+
+    if not active_countdowns:
+        await update.message.reply_text(
+            "⚠️ **当前没有任何进行中的倒计时！**\n\n"
+            "因为 Render 部署重置了数据，请先在群里发送：\n"
+            "`/set PSPM 1 2026-10-29`\n\n"
+            "设置成功后再发 `/test` 尝试。",
+            parse_mode="Markdown",
+        )
+        return
+
+    await daily_broadcast(context)
+
 # --- 启动配置 ---
 
 async def post_init(application: Application):
@@ -200,14 +217,13 @@ def main():
     # 开启防休眠 HTTP 服务
     start_health_check_server()
 
-    # ⚠️ 请把下面的 Token 替换成你的真实 Token 字符串
     TOKEN = "8821535562:AAF30ZPTWkDlJGs_ioqDVBiYQs5hWr36tF8"
 
     app = ApplicationBuilder().token(TOKEN).post_init(post_init).build()
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("set", set_command))
     app.add_handler(CommandHandler("list", list_command))
-    app.add_handler(CommandHandler("test", daily_broadcast))
+    app.add_handler(CommandHandler("test", test_command))
 
     logger.info("Bot 运行中...")
     app.run_polling()
