@@ -1,6 +1,9 @@
 import datetime
 import logging
+import os
 import sqlite3
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from telegram import Update
 from telegram.ext import (
     Application,
@@ -19,6 +22,27 @@ DB_FILE = "countdowns.db"
 
 # 设置目标时区（默认 UTC+8，适应北京/马来西亚时间）
 LOCAL_TZ = datetime.timezone(datetime.timedelta(hours=8))
+
+# --- 防休眠 Web 服务器 ---
+
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    """响应 Render 和外部 Ping 的健康检查请求，防止服务休眠"""
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/plain; charset=utf-8")
+        self.end_headers()
+        self.wfile.write(b"Bot is alive and running!")
+
+    def log_message(self, format, *args):
+        # 禁用默认日志，避免控制台被保活请求刷屏
+        return
+
+def start_health_check_server():
+    port = int(os.environ.get("PORT", 8080))
+    server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    logger.info(f"防休眠 HTTP 服务已开启，监听端口: {port}")
 
 # --- 数据库操作 ---
 
@@ -72,7 +96,7 @@ def mark_as_notified(countdown_id: int):
     conn.commit()
     conn.close()
 
-# --- 每天 06:00 准时播报（完全匹配截图格式） ---
+# --- 每天 06:00 准时播报 ---
 
 async def daily_broadcast(context: ContextTypes.DEFAULT_TYPE):
     active_countdowns = get_active_countdowns()
@@ -89,7 +113,6 @@ async def daily_broadcast(context: ContextTypes.DEFAULT_TYPE):
             mark_as_notified(c_id)
             continue
 
-        # 生成与截图一模一样的排版格式
         msg = (
             f"⏰ {name}\n"
             f"📅 Target: {target_date}\n"
@@ -101,7 +124,6 @@ async def daily_broadcast(context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logger.error(f"发送播报给群组 {chat_id} 失败: {e}")
 
-        # 如果今天已经是最后一天，播报完成后标记结束
         if days_left == 0:
             mark_as_notified(c_id)
 
@@ -140,8 +162,7 @@ async def set_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_countdown(chat_id, name, target_date)
 
     days_left = (target_date - now_date).days
-    
-    # 设置成功时的预览消息
+
     preview_msg = (
         f"✅ **Countdown set successfully!**\n\n"
         f"⏰ {name}\n"
@@ -173,29 +194,23 @@ async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def post_init(application: Application):
     init_db()
 
-    # 每天 06:00:00 准时播报
+    # 每天 06:00 准时播报
     target_time = datetime.time(hour=6, minute=0, second=0, tzinfo=LOCAL_TZ)
     application.job_queue.run_daily(daily_broadcast, time=target_time)
-# --- 增加云端服务器端口兼容（防止 Render 报错） ---
-import os, http.server, socketserver, threading
 
-def run_dummy_server():
-    port = int(os.environ.get("PORT", 8080))
-    handler = http.server.SimpleHTTPRequestHandler
-    with socketserver.TCPServer(("", port), handler) as httpd:
-        httpd.serve_forever()
-
-threading.Thread(target=run_dummy_server, daemon=True).start()
-# --------------------------------------------------
 def main():
-    TOKEN = "8821535562:AAF30ZPTWkDlJGs_ioqDVBiYQs5hWr36tF8"  # 替换为你的真实 Token
+    # 开启防休眠 Web 服务
+    start_health_check_server()
+
+    TOKEN = "8821535562:AAF30ZPTWkDlJGs_ioqDVBiYQs5hWr36tF8"  # ⚠️ 替换为你的真实 Token
 
     app = ApplicationBuilder().token(TOKEN).post_init(post_init).build()
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("set", set_command))
     app.add_handler(CommandHandler("list", list_command))
+    app.add_handler(CommandHandler("test", daily_broadcast))  # 方便手动测试
 
-    logger.info("Bot running...")
+    logger.info("Bot 运行中...")
     app.run_polling()
 
 if __name__ == "__main__":
